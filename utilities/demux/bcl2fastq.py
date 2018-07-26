@@ -14,6 +14,7 @@ BCL2FASTQ = 'bcl2fastq'
 
 S3_RETRY = 5
 S3_LOG_DIR = 's3://jamestwebber-logs/bcl2fastq_logs/'
+ROOT_DIR_PATH = '/tmp'
 
 
 def get_default_requirements():
@@ -68,9 +69,9 @@ def main(logger):
     args = parser.parse_args()
 
     if os.environ.get('AWS_BATCH_JOB_ID'):
-        root_dir = os.path.join('/mnt', os.environ['AWS_BATCH_JOB_ID'])
+        root_dir = os.path.join(ROOT_DIR_PATH, os.environ['AWS_BATCH_JOB_ID'])
     else:
-        root_dir = '/mnt'
+        root_dir = ROOT_DIR_PATH
 
     if args.sample_sheet_name is None:
         args.sample_sheet_name = '{}.csv'.format(args.exp_id)
@@ -118,9 +119,12 @@ def main(logger):
         )
 
 
+    # this is actually awful because the process forks and you have to go kill it yourself
     command = ('while true;'
-               ' do echo "memory usage" `cat /sys/fs/cgroup/memory/memory.usage_in_bytes`;'
-               ' echo "disk usage" `df -h | grep "/mnt"`;'
+               ' do memusage=`cat /sys/fs/cgroup/memory/memory.usage_in_bytes`;'
+               ' memgb=`echo "${memusage}/(1000000000)" | bc -l | xargs -I {} printf "%.2f\n" {}`;'
+               ' echo "memory usage: ${memgb}GB";'
+               ' echo "disk usage: " `df -h | grep -e "/$" | awk \'{print $(NF-4)" "$(NF-3)" "$(NF-2)" "$(NF-1)" "$NF}\''
                ' sleep 90;'
                ' done')
     p = subprocess.Popen([command], shell=True)
