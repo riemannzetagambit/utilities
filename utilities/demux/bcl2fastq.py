@@ -140,6 +140,7 @@ def main(logger):
     fastqgz_files = glob.glob(os.path.join(output_path, '*fastq.gz'))
     logger.debug('all fastq.gz files\n{}\n\n'.format('\n'.join(fastqgz_files)))
 
+    # TODO(dstone): organize the run based on the TraceGenomics/RunXX/RunXX_YY/*.fastq.gz and do our usual rearrangement
     for fastq_file in fastqgz_files:
         if (args.skip_undetermined
             and os.path.basename(fastq_file).startswith('Undetermined')):
