@@ -58,6 +58,7 @@ def get_parser():
                         help='Defaults to [exp_id].csv')
     parser.add_argument('--force-glacier', action='store_true',
                         help='Force a transfer from Glacier storage')
+    # TODO(dstone): add an option to delete the original un-demultiplexed from S3 afterward
 
     parser.add_argument('--bcl2fastq_options',
                         default=['--no-lane-splitting'],
@@ -169,7 +170,8 @@ def main(logger):
             logger.info("removing {}".format(os.path.basename(fastq_file)))
             os.remove(fastq_file)
         elif args.group_by_sample:
-            m = re.match("(.+)(_R[12]_001.fastq.gz)",
+            # exclude the sample number (_S[numbers])
+            m = re.match("(.+)(_S\d+_R[12]_001.fastq.gz)",
                          os.path.basename(fastq_file))
             if m:
                 sample = m.group(1)
@@ -179,9 +181,9 @@ def main(logger):
                     raise ValueError('Was expecting to find a sample name of the form RunXX_YY, could not find in {} sample name!'.format(sample))
                 run = sample.split('_')[0]
                 grouped_sample_path = os.path.join(output_path, run, sample)
-                if not os.path.exists(newpath):
+                if not os.path.exists(grouped_sample_path):
                     logger.debug("creating {}".format(grouped_sample_path))
-                    os.mkdir(grouped_sample_path)
+                    os.makedirs(grouped_sample_path)
                 logger.debug("moving {}".format(fastq_file))
                 os.rename(fastq_file, os.path.join(grouped_sample_path, os.path.basename(fastq_file)
                 ))
