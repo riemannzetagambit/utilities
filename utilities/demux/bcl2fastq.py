@@ -7,13 +7,15 @@ import re
 import subprocess
 import sys
 
+import pandas as pd
+
 from utilities.log_util import get_logger, log_command
 
 
 BCL2FASTQ = 'bcl2fastq'
 
 S3_RETRY = 5
-S3_LOG_DIR = 's3://jamestwebber-logs/bcl2fastq_logs/'
+S3_LOG_DIR = 's3://trace-genomics/TraceGenomics/logs'
 ROOT_DIR_PATH = '/tmp'
 
 
@@ -30,22 +32,24 @@ def get_parser():
             formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    parser.add_argument('--exp_id', required=True)
+    parser.add_argument('--exp_id', 
+                        help='Name of the prefix on S3 in --s3_input_dir that contains the run you want to process',
+                        required=True)
 
     parser.add_argument('--s3_input_dir',
-                        default='s3://czbiohub-seqbot/bcl',
+                        default='s3://trace-genomics/TraceGenomics',
                         help='S3 path for [exp_id] folder of BCL files')
     parser.add_argument('--s3_output_dir',
-                        default='s3://czbiohub-seqbot/fastqs',
+                        default='s3://trace-genomics/TraceGenomics',
                         help='S3 path to put fastq files')
     parser.add_argument('--s3_report_dir',
-                        default='s3://czbiohub-seqbot/reports',
+                        default='s3://trace-genomics/TraceGenomics/reports',
                         help='S3 path to put the bcl2fastq report')
     parser.add_argument('--s3_sample_sheet_dir',
-                        default='s3://czbiohub-seqbot/sample-sheets',
+                        default='s3://trace-genomics/TraceGenomics/sample-sheets',
                         help='S3 path to look for the sample sheet')
 
-    parser.add_argument('--star_structure', action='store_true',
+    parser.add_argument('--group_by_sample', action='store_true',
                         help='Group the fastq files into folders based on sample name')
     parser.add_argument('--skip_undetermined', action='store_true',
                         help="Don't upload the Undetermined files (can save time)")
@@ -61,6 +65,17 @@ def get_parser():
                         help='Options to pass to bcl2fastq')
 
     return parser
+
+
+def _check_for_run_information(sample_name):
+    """
+    Helper function to try and find run ID information of the form RunXX_YY
+    """
+    m = re.match('^Run\d+_\d+$', sample_name)
+    if m is not None:
+        return True
+    else:
+        return False
 
 
 def main(logger):
@@ -101,7 +116,14 @@ def main(logger):
                 os.path.join(args.s3_sample_sheet_dir, args.sample_sheet_name))
         )
 
-
+    # do a check on the sample inputs to make sure we can get run IDs from all of them
+    # change this if the Illumina sample sheet output ever changes; otherwise this line has the headers
+    _SAMPLE_SHEET_STARTING_LINE = 20 
+    df_csv = pd.read_csv(os.path.join(result_path, args.sample_sheet_name), header=_SAMPLE_SHEET_STARTING_LINE)
+    samples_not_matching_run_ids = [sample_name for sample_name in df_csv['Sample_ID'] if not _check_for_run_information(sample_name)]
+    if len(samples_not_matching_run_ids) > 0:
+        raise ValueError('Found sample names that I could not extract run ID values (of the form RunXX_YY) from: '
+                         '{}'.format(samples_not_matching_run_ids))
 
     # download the bcl files
     command = ['aws', 's3', 'sync', '--quiet',
@@ -146,19 +168,22 @@ def main(logger):
             and os.path.basename(fastq_file).startswith('Undetermined')):
             logger.info("removing {}".format(os.path.basename(fastq_file)))
             os.remove(fastq_file)
-        elif args.star_structure:
+        elif args.group_by_sample:
             m = re.match("(.+)(_R[12]_001.fastq.gz)",
                          os.path.basename(fastq_file))
             if m:
                 sample = m.group(1)
-                if not os.path.exists(os.path.join(output_path, sample)):
-                    logger.debug("creating {}".format(
-                            os.path.join(output_path, sample))
-                    )
-                    os.mkdir(os.path.join(output_path, sample))
+                if not re.match('^Run\d+_\d+$', sample):
+                    # shouldn't actually be able to get here, because there is a check above at the sample sheet level,
+                    # but just in case
+                    raise ValueError('Was expecting to find a sample name of the form RunXX_YY, could not find in {} sample name!'.format(sample))
+                run = sample.split('_')[0]
+                grouped_sample_path = os.path.join(output_path, run, sample)
+                if not os.path.exists(newpath):
+                    logger.debug("creating {}".format(grouped_sample_path))
+                    os.mkdir(grouped_sample_path)
                 logger.debug("moving {}".format(fastq_file))
-                os.rename(fastq_file, os.path.join(
-                        output_path, sample, os.path.basename(fastq_file)
+                os.rename(fastq_file, os.path.join(grouped_sample_path, os.path.basename(fastq_file)
                 ))
             else:
                 logger.warning("Warning: regex didn't match {}".format(fastq_file))
@@ -167,7 +192,9 @@ def main(logger):
 
     # upload fastq files to destination folder
     command = ['aws', 's3', 'sync', '--quiet', output_path,
-               os.path.join(args.s3_output_dir, args.exp_id, 'rawdata'),
+               args.s3_output_dir,
+               # this doesn't fit our output structure
+               #os.path.join(args.s3_output_dir, args.exp_id, 'rawdata'),
                '--exclude', '"*"', '--include', '"*fastq.gz"']
     for i in range(S3_RETRY):
         try:
