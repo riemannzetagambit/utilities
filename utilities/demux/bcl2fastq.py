@@ -53,6 +53,12 @@ def get_parser():
                         help='Group the fastq files into folders based on sample name')
     parser.add_argument('--skip_undetermined', action='store_true',
                         help="Don't upload the Undetermined files (can save time)")
+    parser.add_argument('--no_s3_download', action='store_true',
+                        help="Do not download bcl files from S3 (useful if testing or already have locally "
+                             "demultiplexed files in the ROOT_DIR_PATH location. Currently a work in progress.")
+    parser.add_argument('--no_s3_upload', action='store_true',
+                        help="Do not upload demultiplexed fastq files to S3 (useful if testing and don't want to "
+                             "check demultiplexing locally without writing to S3. Currently a work in progress.")
 
     parser.add_argument('--sample_sheet_name', default=None,
                         help='Defaults to [exp_id].csv')
@@ -103,43 +109,44 @@ def main(logger):
 
 
 
-    command = ['aws', 's3', 'cp', '--quiet',
-               os.path.join(args.s3_sample_sheet_dir, args.sample_sheet_name),
-               result_path]
-    for i in range(S3_RETRY):
-        try:
-            log_command(logger, command, shell=True)
-            break
-        except subprocess.CalledProcessError:
-            logger.info("retrying s3 copy")
-    else:
-        raise RuntimeError("couldn't download sample sheet {}".format(
-                os.path.join(args.s3_sample_sheet_dir, args.sample_sheet_name))
-        )
+    if not args.no_s3_download:
+        command = ['aws', 's3', 'cp', '--quiet',
+                   os.path.join(args.s3_sample_sheet_dir, args.sample_sheet_name),
+                   result_path]
+        for i in range(S3_RETRY):
+            try:
+                log_command(logger, command, shell=True)
+                break
+            except subprocess.CalledProcessError:
+                logger.info("retrying s3 copy")
+        else:
+            raise RuntimeError("couldn't download sample sheet {}".format(
+                    os.path.join(args.s3_sample_sheet_dir, args.sample_sheet_name))
+            )
 
-    # do a check on the sample inputs to make sure we can get run IDs from all of them
-    # change this if the Illumina sample sheet output ever changes; otherwise this line has the headers
-    _SAMPLE_SHEET_STARTING_LINE = 20 
-    df_csv = pd.read_csv(os.path.join(result_path, args.sample_sheet_name), header=_SAMPLE_SHEET_STARTING_LINE)
-    samples_not_matching_run_ids = [sample_name for sample_name in df_csv['Sample_ID'] if not _check_for_run_information(sample_name)]
-    if len(samples_not_matching_run_ids) > 0:
-        raise ValueError('Found sample names that I could not extract run ID values (of the form RunXX_YY) from: '
-                         '{}'.format(samples_not_matching_run_ids))
+        # do a check on the sample inputs to make sure we can get run IDs from all of them
+        # change this if the Illumina sample sheet output ever changes; otherwise this line has the headers
+        _SAMPLE_SHEET_STARTING_LINE = 20 
+        df_csv = pd.read_csv(os.path.join(result_path, args.sample_sheet_name), header=_SAMPLE_SHEET_STARTING_LINE)
+        samples_not_matching_run_ids = [sample_name for sample_name in df_csv['Sample_ID'] if not _check_for_run_information(sample_name)]
+        if len(samples_not_matching_run_ids) > 0:
+            raise ValueError('Found sample names that I could not extract run ID values (of the form RunXX_YY) from: '
+                             '{}'.format(samples_not_matching_run_ids))
 
-    # download the bcl files
-    command = ['aws', 's3', 'sync', '--quiet',
-               '--force-glacier-transfer' if args.force_glacier else '',
-               os.path.join(args.s3_input_dir, args.exp_id), bcl_path]
-    for i in range(S3_RETRY):
-        try:
-            log_command(logger, command, shell=True)
-            break
-        except subprocess.CalledProcessError:
-            logger.info("retrying s3 sync bcl")
-    else:
-        raise RuntimeError("couldn't sync {}".format(
-                os.path.join(args.s3_input_dir, args.exp_id))
-        )
+        # download the bcl files
+        command = ['aws', 's3', 'sync', '--quiet',
+                   '--force-glacier-transfer' if args.force_glacier else '',
+                   os.path.join(args.s3_input_dir, args.exp_id), bcl_path]
+        for i in range(S3_RETRY):
+            try:
+                log_command(logger, command, shell=True)
+                break
+            except subprocess.CalledProcessError:
+                logger.info("retrying s3 sync bcl")
+        else:
+            raise RuntimeError("couldn't sync {}".format(
+                    os.path.join(args.s3_input_dir, args.exp_id))
+            )
 
 
     # this is actually awful because the process forks and you have to go kill it yourself
@@ -192,44 +199,46 @@ def main(logger):
 
     sys.stdout.flush()
 
-    # upload fastq files to destination folder
-    command = ['aws', 's3', 'sync', '--quiet', output_path,
-               args.s3_output_dir,
-               # this doesn't fit our output structure
-               #os.path.join(args.s3_output_dir, args.exp_id, 'rawdata'),
-               '--exclude', '"*"', '--include', '"*fastq.gz"']
-    for i in range(S3_RETRY):
-        try:
-            log_command(logger, command, shell=True)
-            break
-        except subprocess.CalledProcessError:
-            logger.info("retrying sync fastq")
-    else:
-        raise RuntimeError("couldn't sync fastqs")
+    if not args.no_s3_upload:
+        # upload fastq files to destination folder
+        command = ['aws', 's3', 'sync', '--quiet', output_path,
+                   args.s3_output_dir,
+                   # this doesn't fit our output structure
+                   #os.path.join(args.s3_output_dir, args.exp_id, 'rawdata'),
+                   '--exclude', '"*"', '--include', '"*fastq.gz"']
+        for i in range(S3_RETRY):
+            try:
+                log_command(logger, command, shell=True)
+                break
+            except subprocess.CalledProcessError:
+                logger.info("retrying sync fastq")
+        else:
+            raise RuntimeError("couldn't sync fastqs")
 
 
-    # check fastq upload
-    command = ['aws', 's3', 'ls', '--recursive',
-               os.path.join(args.s3_output_dir, args.exp_id, 'rawdata')]
-    log_command(logger, command, shell=True)
+        # check fastq upload
+        command = ['aws', 's3', 'ls', '--recursive',
+                   args.s3_output_dir]
+                   #os.path.join(args.s3_output_dir, args.exp_id, 'rawdata')]
+        log_command(logger, command, shell=True)
 
 
-    # Move reports data back to S3
-    reports_path = subprocess.check_output(
-            "ls -d {}".format(os.path.join(output_path, 'Reports', 'html', '*',
-                                           'all', 'all', 'all')),
-            shell=True).rstrip()
-    command = ['aws', 's3', 'cp', '--quiet', reports_path,
-               os.path.join(args.s3_report_dir, args.exp_id),
-               '--recursive']
-    for i in range(S3_RETRY):
-        try:
-            log_command(logger, command, shell=True)
-            break
-        except subprocess.CalledProcessError:
-            logger.info("retrying cp reports")
-    else:
-        raise RuntimeError("couldn't cp reports")
+        # Move reports data back to S3
+        reports_path = subprocess.check_output(
+                "ls -d {}".format(os.path.join(output_path, 'Reports', 'html', '*',
+                                               'all', 'all', 'all')),
+                shell=True).rstrip()
+        command = ['aws', 's3', 'cp', '--quiet', reports_path,
+                   os.path.join(args.s3_report_dir, args.exp_id),
+                   '--recursive']
+        for i in range(S3_RETRY):
+            try:
+                log_command(logger, command, shell=True)
+                break
+            except subprocess.CalledProcessError:
+                logger.info("retrying cp reports")
+        else:
+            raise RuntimeError("couldn't cp reports")
 
     p.kill()
 
