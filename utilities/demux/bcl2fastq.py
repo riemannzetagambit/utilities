@@ -126,7 +126,7 @@ def main(logger):
 
         # do a check on the sample inputs to make sure we can get run IDs from all of them
         # change this if the Illumina sample sheet output ever changes; otherwise this line has the headers
-        _SAMPLE_SHEET_STARTING_LINE = 20 
+        _SAMPLE_SHEET_STARTING_LINE = 21
         df_csv = pd.read_csv(os.path.join(result_path, args.sample_sheet_name), header=_SAMPLE_SHEET_STARTING_LINE)
         samples_not_matching_run_ids = [sample_name for sample_name in df_csv['Sample_ID'] if not _check_for_run_information(sample_name)]
         if len(samples_not_matching_run_ids) > 0:
