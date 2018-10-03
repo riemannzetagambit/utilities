@@ -182,19 +182,18 @@ def main(logger):
             m = re.match("(.+)(_S\d+_R[12]_001.fastq.gz)",
                          os.path.basename(fastq_file))
             if m:
-                sample = m.group(1)
+                sample = m.group(1) # should be of the form RunX_Y
                 if not re.match('^Run\d+_\d+$', sample):
                     # shouldn't actually be able to get here, because there is a check above at the sample sheet level,
                     # but just in case
                     raise ValueError('Was expecting to find a sample name of the form RunXX_YY, could not find in {} sample name!'.format(sample))
                 run = sample.split('_')[0]
-                grouped_sample_path = os.path.join(output_path, run, sample)
+                grouped_sample_path = os.path.join(output_path, run, sample) # organizes as RunX/RunX_Y/[sample stuff]
                 if not os.path.exists(grouped_sample_path):
                     logger.debug("creating {}".format(grouped_sample_path))
                     os.makedirs(grouped_sample_path)
                 logger.debug("moving {}".format(fastq_file))
-                os.rename(fastq_file, os.path.join(grouped_sample_path, os.path.basename(fastq_file)
-                ))
+                os.rename(fastq_file, os.path.join(grouped_sample_path, os.path.basename(fastq_file)))
             else:
                 logger.warning("Warning: regex didn't match {}".format(fastq_file))
 
