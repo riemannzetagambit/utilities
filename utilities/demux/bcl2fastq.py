@@ -32,7 +32,7 @@ def get_parser():
             formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    parser.add_argument('--exp_id', 
+    parser.add_argument('--exp_id',
                         help='Name of the prefix on S3 in --s3_input_dir that contains the run you want to process',
                         required=True)
 
@@ -103,13 +103,14 @@ def main(logger):
     bcl_path = os.path.join(result_path, 'bcl')
     output_path = os.path.join(result_path, 'fastqs')
 
-    # download sample sheet
-    os.makedirs(result_path)
-    os.mkdir(bcl_path)
-
-
-
     if not args.no_s3_download:
+        # only make dirs if they don't exist yet
+        if not os.path.isdir(result_path):
+            os.makedirs(result_path)
+        if not os.path.isdir(bcl_path):
+            os.mkdir(bcl_path)
+
+        # download sample sheet
         command = ['aws', 's3', 'cp', '--quiet',
                    os.path.join(args.s3_sample_sheet_dir, args.sample_sheet_name),
                    result_path]
